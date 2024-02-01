@@ -1,0 +1,181 @@
+Entra ID:
+
+Collect the Public IP of the Entra ID instance.
+Ensure secure LDAP is enabled in Entra ID and "Allow Secure LDAP access over the internet" is also enabled.
+
+Add Inbound Security Rule to Network security group for Virtual Subnet on Entra ID:
+
+Source: IP
+Source IP address/CIDR ranges: Firewall IP / 32
+Source Port Ranges: *
+Destination: Any
+Service: Custom
+Destination port ranges: 636
+Protocol: TCP
+Action: Allow
+Priority: 311
+Name: Allow LDAPSInbound
+
+DNS:
+Set up DNS resolver from Public IP to ldaps.{domain name} where {domain name} matches the domain name on Entra ID.
+Test if you ping ldaps.{domain name} does it resolve to  the public ip?
+On the OPNsense device, go to System - Settings - General, and set the DNS servers (Google / Cloudflare are fine)
+Untick "Allow DNS server list to be ovveridden by DHCP/PPP on WAN" and tick "Do not use the local DNS Service as a nameserver for this system".
+
+
+User set up:
+Great a VPN security group on Entra ID and add all VPN users into security group.
+Entra ID requires a new type of password hash. Force users to update their password if they haven't changed it since September 2023.
+Great a bind service user - this user should only have read access to Entra and where possible have a non-expiring password???
+
+LDAP Certs:
+Secure LDAP (LDAPs) and OPNsense require a private and public key pair. The private key is uploaded into Entra ID's section, be sure its set to *.{domain name} where {domain name}
+
+
+With the public key, open it in Notepad and extract all he information. This is required on OPNsense.
+
+On OPNsense creatre a new Authority in: System - Trust - Authorities. 
+Press add
+Set a descriptive name (OPNsense LDAP -> Entra or similar)
+Method: Import an exsisting Certificate Authority
+Certificate data: Paste in the certificate data from the public key
+Leave Certficate private key and serial for next certificate as empty.
+Save the Authority.
+
+### openvpn
+OpenVPN Certs:
+
+On OPNsense create a new Authority in: System - Trust - Authorities. 
+Press add
+Set a descriptive name ()
+Method: Create a internal Certificate Authority
+Internal Certificate Authority
+Key Type: RSA
+Key length (bits): 2048
+Digest Algorithm: SHA256
+Lifetime (days)	:825 *** See how we want to manage this
+Distinguished name
+Country Code : GB (Great Britain)
+State or Province : UK	
+City : City firewall is hosted in
+Organization : Company
+Email Address :  Email address for cert
+Common Name : CA- {VPN Name}
+
+Create a server certificate:
+System - Trust - Certificates
+Method: Create an internal Certificate
+Descriptive name: {VPN Name} Server Certificate 
+
+Internal Certificate
+Certificate authority : CA- {VPN Name} (From above)
+Type: Server Certificate
+Key Type: RSA
+Key length (bits): 2048
+Digest Algorithm: SHA256
+Lifetime (days)	: 1095
+Private key location: Save on this firewall
+
+Distinguished name *** Set this the same as above
+Country Code : GB (Great Britain)
+State or Province : UK	
+City : City firewall is hosted in
+Organization : Company
+Email Address :  Email address for cert
+Common Name :  	{VPN Name} Server Certificate 
+
+
+
+
+Set up LDAP on OPNsense by going to system - access - server
+Press add
+Give it a descriptive name (Microsoft Intra Connect for instance)
+Type: LDAP
+Hostname or IP address : ldaps.{domain name}
+Port Value: 636
+Transport: SSL - Encrypted
+Protocol Version - 3
+Bind Credentails: 
+: User DN:  email address for bind account
+: Password: password for bind account
+
+Search scope: Entire Subtree
+Base DN: DC=domain name, DC=co, DC=uk 
+Authenication containers: press select: Chose what containers in AD Users are located.
+Extended Query: Enter the restriction, to stop everyone syncing over *** IE:  &(memberOf=CN=MyGroup,OU=AADDC Users,DC=cosco,DC=net,DC=uk)  
+User naming attribute:  UserPrincipalName
+
+Read properties: Unticked
+Synchronize groups: Unticked
+Constraint groups: Unticked
+Limit groups: Nothing selected
+Automatic user creation: Unticked
+Match case insensitive: Ticked
+
+Then test.
+Go to System - Access - Tester
+Select the Authenication Server as the one you created above.
+Enter email and password of user that match the Authenication container/s and extended query. 
+We should get a success message. If error: User DN not found : The email address does not exist in the Authenication Container or extended query.
+The following mean incorrect credentials: 
+Authentication failed.
+error: 80090308: LdapErr: DSID-0C090569, comment: AcceptSecurityContext error, data 52e, v4563
+ldap_error: Invalid credentials
+
+OpenVPN settings:
+Vpn - OpenVPN - Servers - Add
+
+General Information
+Description: VPN Name
+Server Mode: Remote Access ( User Auth )
+Backend for authenication: The LDAP server we configured
+Enforce Local group: (none)
+Protocol: UDP
+Device Mode: tun
+Interface: WAN or firewall IP.
+Local Port: Whatever Port you want. OpenVPN's default is 1194
+
+Cryptographic Settings
+TLS Authentication: Enabled - Authenication & Encryption
+TLS Shared Key: Automatically generate a shared TLS authentication key: ticked
+Peer Certificate Authority: CA- {VPN Name} (From above)
+Peer Certificate Revocation List: None
+Server Certificate: {VPN Name} Server Certificate 
+Encryption algorithm (deprecated): 
+Auth Digest Algorithm:
+Certificate Depth
+
+
+Tunnel Settings
+IPv4 Tunnel Network: 10.10.0.0/24
+IPv6 Tunnel Network: Empty
+Redirect Gateway: Unticked	
+IPv4 Local Network	192.168.1.0/24
+IPv6 Local Network: Empty
+IPv4 Remote Network: Empty
+IPv6 Remote Network: Empty
+Concurrent connections: Empty	
+Compression: No Preference
+Type-of-Service: Unticked	
+Inter-client communication: Unticked	
+Duplicate Connections: Ticked	
+
+Client Settings
+Dynamic IP: Ticked	
+Topology: Unticked	
+DNS Default Domain: Unticked	
+DNS Domain search list: Unticked	
+DNS Servers: Unticked	
+Force DNS cache update: Unticked	
+Prevent DNS leaks: Unticked	
+NTP Servers: Unticked	
+NetBIOS Options: Unticked
+Client Management Port: Unticked
+
+Advanced configuration
+Advanced: Empty
+Verbosity level: 1 (default)
+Renegotiate time: 0
+Force CSO Login Matching: Unticked	
+
+
